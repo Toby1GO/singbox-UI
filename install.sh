@@ -1,37 +1,68 @@
 #!/bin/bash
 
-# --- 配置区 ---
-# 替换为你的 GitHub 实际信息
-GITHUB_USER="Toby1GO"
-REPO_NAME="singbox-ui"
-# 自动获取最新版本号 (或者你可以写死，如 TAG="v1.0.0")
-TAG="v1.0"
+# 遇到任何错误立即停止执行
+set -e
 
-FILENAME="SingboxUI.tar.gz"
-DOWNLOAD_URL="https://github.com/$GITHUB_USER/$REPO_NAME/releases/download/$TAG/$FILENAME"
+# --- 配置区 ---
+GITHUB_USER="Toby1GO"
+REPO_NAME="singbox-UI"
 INSTALL_DIR="/opt/singbox_ui"
 SERVICE_NAME="singbox_ui"
+FILENAME="SingboxUI.tar.gz"
 
-echo ">>> 准备安装版本: $TAG"
+# 1. 自动获取最新 Tag
+echo ">>> 正在获取远程版本信息..."
+TAG=$(curl -s "https://api.github.com/repos/$GITHUB_USER/$REPO_NAME/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
-# 1. 创建目录并下载
+if [ -z "$TAG" ]; then
+    echo "❌ 错误：无法获取最新版本号，请检查仓库名和网络。"
+    exit 1
+fi
+
+DOWNLOAD_URL="https://github.com/$GITHUB_USER/$REPO_NAME/releases/download/$TAG/$FILENAME"
+
+# 2. 准备安装目录
+echo ">>> 准备安装目录: $INSTALL_DIR"
 sudo mkdir -p $INSTALL_DIR
-echo ">>> 正在从 Release 下载资源..."
-sudo curl -L $DOWNLOAD_URL -o $INSTALL_DIR/$FILENAME
+cd $INSTALL_DIR
 
-# 2. 解压并清理
-echo ">>> 正在解压文件..."
-sudo tar -xzf $INSTALL_DIR/$FILENAME -C $INSTALL_DIR
-sudo rm $INSTALL_DIR/$FILENAME
+# 3. 安全下载
+echo ">>> 正在从 Release 下载: $FILENAME (版本: $TAG)"
+# -L 跟随重定向, -f 如果 404 则返回错误码
+if ! sudo curl -L -f "$DOWNLOAD_URL" -o "$FILENAME"; then
+    echo "❌ 错误：文件下载失败！请检查 Release 中是否有 $FILENAME"
+    exit 1
+fi
 
-# 3. 赋予执行权限
-echo ">>> 设置程序权限..."
-# 假设解压后文件名叫 box 和 sing-box
-sudo chmod +x $INSTALL_DIR/box
-sudo chmod +x $INSTALL_DIR/sing-box
+# 4. 校验文件格式 (防止下载到 HTML 报错页面)
+if ! file "$FILENAME" | grep -q "gzip compressed data"; then
+    echo "❌ 错误：下载的文件损坏或格式不正确（非 gzip 压缩包）。"
+    echo "可能是下载到了 GitHub 的报错页面，请检查下载链接。"
+    sudo rm "$FILENAME"
+    exit 1
+fi
 
-# 4. 写入 Systemd 服务文件 (实现开机自启)
-echo ">>> 正在配置开机自启动服务..."
+# 5. 解压
+echo ">>> 正在解压..."
+if ! sudo tar -xzf "$FILENAME" -C "$INSTALL_DIR"; then
+    echo "❌ 错误：解压失败。"
+    exit 1
+fi
+sudo rm "$FILENAME"
+
+# 6. 核心文件存在性检查
+echo ">>> 检查程序文件..."
+if [ ! -f "$INSTALL_DIR/box" ]; then
+    echo "❌ 错误：解压后的目录中未找到主程序 'box'"
+    exit 1
+fi
+
+# 7. 授权
+sudo chmod +x "$INSTALL_DIR/box"
+[ -f "$INSTALL_DIR/sing-box" ] && sudo chmod +x "$INSTALL_DIR/sing-box"
+
+# 8. 写入并配置 Systemd 服务
+echo ">>> 配置系统服务..."
 cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME.service
 [Unit]
 Description=Singbox UI Service
@@ -39,25 +70,21 @@ After=network.target
 
 [Service]
 Type=simple
-User=$USER
+User=root
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/box
-Restart=on-failure
-StandardOutput=journal
-StandardError=journal
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 5. 启动服务
-echo ">>> 正在加载并启动服务..."
+# 9. 最终启动
+echo ">>> 启动服务并设置自启动..."
 sudo systemctl daemon-reload
 sudo systemctl enable $SERVICE_NAME
-sudo systemctl start $SERVICE_NAME
+sudo systemctl restart $SERVICE_NAME
 
-echo "-----------------------------------------------"
-echo "安装成功！"
-echo "服务状态: systemctl status $SERVICE_NAME"
-echo "查看日志: journalctl -u $SERVICE_NAME -f"
-echo "-----------------------------------------------"
+echo "✅ 安装成功！"
+echo "使用 'systemctl status $SERVICE_NAME' 查看运行状态。"
