@@ -4,7 +4,7 @@ set -e
 DOWNLOAD_URL="https://github.com/Toby1GO/singbox-UI/releases/download/V1.0/singbox"
 INSTALL_DIR="/opt/singbox_ui"
 SERVICE_NAME="singbox_ui"
-BIN_NAME="box"
+BIN_NAME="singbox"
 
 echo ">>> 准备目录"
 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
